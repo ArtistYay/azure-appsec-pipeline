@@ -1,0 +1,6 @@
+.azure-appsec-pipeline/
+.venv/
+__pycache__/
+*.pyc
+.env
+.git
