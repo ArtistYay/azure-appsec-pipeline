@@ -5,3 +5,5 @@ Intersecting DevSecOps to security operations
 ### Built with
 
 - Python
+- Docker
+- Terraform
