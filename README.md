@@ -6,4 +6,4 @@ Intersecting DevSecOps to security operations
 
 - Python
 - Docker
-- Terraform
+- Terraform 
