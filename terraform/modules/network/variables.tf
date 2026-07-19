@@ -30,7 +30,7 @@ variable "subnet_name" {
 
 variable "subnet_address_prefix" {
   description = "subnet CIDR"
-  type        = string
+  type        = list(string)
 }
 
 variable "nsg_name" {
