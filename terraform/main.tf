@@ -12,17 +12,17 @@ provider "azurerm" {
     features {}
 }
 
-resource "azurerm_resource_group" "rg" {
-  name     = var.resource_group_name
-  location = var.location
+data "azurerm_resource_group" "rg" {
+  name = var.resource_group_name
 }
+
 
 # storage first no module dependencies, everything else in the chain needs its outputs
 module "storage" {
   source = "./modules/storage"
 
-  resource_group_name = azurerm_resource_group.rg.name
-  location             = azurerm_resource_group.rg.location
+  resource_group_name  = var.resource_group_name
+  location             = var.location
   acr_name             = var.acr_name
   acr_sku              = var.acr_sku
   environment          = var.environment
@@ -32,8 +32,8 @@ module "storage" {
 module "identity" {
   source = "./modules/identity"
 
-  resource_group_name  = azurerm_resource_group.rg.name
-  location              = azurerm_resource_group.rg.location
+  resource_group_name   = var.resource_group_name
+  location              = var.location
   identity_name         = var.identity_name
   acr_id                = module.storage.acr_output
   role_definition_name  = var.role_definition_name
@@ -43,8 +43,8 @@ module "identity" {
 module "compute" {
   source = "./modules/compute"
 
-  resource_group_name                = azurerm_resource_group.rg.name
-  location                            = azurerm_resource_group.rg.location
+  resource_group_name                 = var.resource_group_name
+  location                            = var.location
   container_app_environment_name      = var.container_app_environment_name
   log_analytics_workspace_name        = var.log_analytics_workspace_name
   log_analytics_workspace_sku         = var.log_analytics_workspace_sku
@@ -64,8 +64,8 @@ module "compute" {
 module "network" {
   source = "./modules/network"
 
-  resource_group_name    = azurerm_resource_group.rg.name
-  location                = azurerm_resource_group.rg.location
+  resource_group_name     = var.resource_group_name
+  location                = var.location
   vnet_name               = var.vnet_name
   vnet_address_space      = var.vnet_address_space
   subnet_name             = var.subnet_name
@@ -77,5 +77,5 @@ module "network" {
 module "policy" {
   source = "./modules/policy"
 
-  assignment_scope = azurerm_resource_group.rg.id
+  assignment_scope = data.azurerm_resource_group.rg.id
 }

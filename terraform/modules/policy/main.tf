@@ -137,3 +137,5 @@ resource "azurerm_resource_group_policy_assignment" "container_ratio_assignment"
   policy_definition_id = azurerm_policy_definition.container_ratio_policy.id
   resource_group_id = var.assignment_scope
 }
+
+# JSON is something that is crazy work to learn to write and I honestly created the policy in the GUI and copied and pasted :) 
