@@ -88,3 +88,6 @@ terraform.tfstate.d/
 # Ignore terraform documentation
 terraform-docs.yml
 .terraform-docs.yml
+
+# Ignore config file
+terraform/backend-local.conf

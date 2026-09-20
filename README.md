@@ -18,6 +18,33 @@ I built this to prove I understand how these pieces actually fit together, not j
 - Docker
 - Terraform
 
+## Pipeline Order
+ 
+This project runs as two separate GitHub Actions workflows, triggered independently on path-based filters rather than chained together automatically:
+ 
+- `terraform.yml` triggers on changes to `terraform/**`
+- `app-deploy.yml` triggers on changes to `app/**` and the `Dockerfile`
+They're independent because most changes to one shouldn't automatically trigger the other. But there's a real dependency underneath: the Container App, ACR, and the identity's role assignment all have to exist in Azure before `app-deploy.yml` can build, push, or deploy anything.
+ 
+**On a fresh environment, run `terraform.yml` first.** `app-deploy.yml` will fail if the infrastructure it depends on hasn't been provisioned yet.
+
+## Estimated Monthly Cost
+ 
+This project is sized for a homelab/portfolio budget, not production traffic. Here's the realistic monthly breakdown for every resource this Terraform code creates:
+ 
+| Resource | Config | Est. Monthly Cost | Pricing Reference |
+|---|---|---|---|
+| Azure Container Registry | Basic tier | ~$5/month flat fee | [ACR Pricing](https://azure.microsoft.com/en-us/pricing/details/container-registry/) |
+| Azure Container Apps | 0.5 vCPU / 1GiB, `min_replicas = 0` | ~$0 when idle, fractions of a cent per request when active | [Container Apps Pricing](https://azure.microsoft.com/en-us/pricing/details/container-apps/) |
+| Log Analytics Workspace | PerGB2018, 30-day retention | First 31 days retention free; ingestion for a low-traffic `/health` endpoint is under $1/month | [Azure Monitor Pricing](https://azure.microsoft.com/en-us/pricing/details/monitor/) |
+| VNet, Subnet, NSG | Standard | $0, networking constructs are free on their own | N/A |
+| User-Assigned Managed Identity | N/A | $0, identities are always free | N/A |
+| Azure Policy (definitions + assignments) | N/A | $0, policy is free | N/A |
+| Resource Group | N/A | $0, just a logical container | N/A |
+| Terraform state backend (Storage Account, Hot tier, LRS) | Tiny state file, a few KB | ~$0.01-0.05/month | [Blob Storage Pricing](https://azure.microsoft.com/en-us/pricing/details/storage/blobs/) |
+ 
+**Realistic total: roughly $6-8/month**, almost entirely the ACR Basic flat fee. Running `terraform destroy` between sessions (see the Testing section of the devlog) drops this to $0 for everything except the manually-bootstrapped resource group and identity, which cost nothing just to exist.
+
 ## Prerequisites: One-Time Manual Setup
 
 This project uses a `data` source (not a `resource`) for the resource group. That's a deliberate choice — GitHub Actions authenticates to Azure using OIDC, and the identity behind that authentication has to live in a resource group that Terraform never destroys. Otherwise, tearing down infrastructure for testing would also delete the very credentials the pipeline needs to run.
@@ -48,6 +75,8 @@ az identity create --name id-github-actions-appsec --resource-group rg-appsec-de
   --audiences api://AzureADTokenExchange
 ```
 
+The `--subject` value is a trust condition, not an ownership claim. Azure will only accept a token as proof of this identity if it comes from this exact repo and branch, not from a fork, not from a differently-named repo, even with identical code.
+
 4. A role assignment (Contributor or scoped custom role) granting that identity permission on the resource group
 
 ```bash
@@ -58,5 +87,21 @@ az role assignment create \
 ```
 
 Terraform reads the resource group via a data source, it will never create or destroy it. `terraform destroy` only tears down what's *inside* the resource group.
+
+5. A Storage Account and blob container for Terraform's remote state, so state isn't stored locally and multiple runs (or a run plus a local machine) don't corrupt each other
+```bash
+az storage account create \
+  --name satfstateappsec \
+  --resource-group rg-appsec-dev \
+  --location eastus \
+  --sku Standard_LRS \
+  --encryption-services blob
+ 
+az storage container create \
+  --name tfstate \
+  --account-name satfstateappsec
+```
+ 
+Azure Blob Storage supports state locking natively via blob leases, so two simultaneous `terraform apply` runs can't corrupt the same state file. This has to exist before Terraform can run against this project at all, since Terraform needs somewhere to store its own state before anything else gets created.
 
 #### You can read all my run-ins and mishaps in my knowledge base → [Azure Appsec Pipeline](https://notes.artistuniverse.tech/personal_projects/azure_appsec_pipeline/)
