@@ -6,7 +6,9 @@ variable "assignment_scope" {
 variable "allowed_locations" {
   description = "locations permitted for all resources"
   type        = list(string)
-  default     = ["eastus", "eastus2"]
+  # "global" is needed because some resources (like Azure Monitor action groups) aren't
+  # tied to a region. Without it, this policy blocks the Discord alerting path.
+  default = ["eastus", "eastus2", "global"]
 }
 
 variable "allowed_acr_skus" {

@@ -35,7 +35,7 @@ PARAMETERS
 resource "azurerm_resource_group_policy_assignment" "location_assignment" {
   name                 = "location-assignment"
   policy_definition_id = azurerm_policy_definition.location_policy.id
-  resource_group_id = var.assignment_scope
+  resource_group_id    = var.assignment_scope
 
   parameters = jsonencode({
     allowedLocations = { value = var.allowed_locations }
@@ -80,7 +80,7 @@ PARAMETERS
 resource "azurerm_resource_group_policy_assignment" "acr_sku_assignment" {
   name                 = "acr-sku-assignment"
   policy_definition_id = azurerm_policy_definition.acr_sku_policy.id
-  resource_group_id = var.assignment_scope
+  resource_group_id    = var.assignment_scope
 
   parameters = jsonencode({
     allowedSkus = { value = var.allowed_acr_skus }
@@ -135,5 +135,7 @@ POLICY_RULE
 resource "azurerm_resource_group_policy_assignment" "container_ratio_assignment" {
   name                 = "container-ratio-assignment"
   policy_definition_id = azurerm_policy_definition.container_ratio_policy.id
-  resource_group_id = var.assignment_scope
+  resource_group_id    = var.assignment_scope
 }
+
+# JSON is something that is crazy work to learn to write and I honestly created the policy in the GUI and copied and pasted :)

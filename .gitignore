@@ -20,6 +20,10 @@ crash.*.log
 *.tfvars
 *.tfvars.json
 
+# ...except the per-environment tfvars, which hold no secrets and the pipeline needs them.
+# Secrets go in GitHub secrets / TF_VAR_ environment variables, never in these files.
+!terraform/environments/*/terraform.tfvars
+
 # Ignore override files as they are usually used to override resources locally
 override.tf
 override.tf.json
@@ -88,3 +92,6 @@ terraform.tfstate.d/
 # Ignore terraform documentation
 terraform-docs.yml
 .terraform-docs.yml
+
+# Ignore config file
+terraform/backend-local.conf

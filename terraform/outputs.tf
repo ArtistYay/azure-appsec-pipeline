@@ -1,6 +1,6 @@
 output "resource_group_id" {
   description = "the ID of the resource group all resources are deployed into"
-  value       = azurerm_resource_group.rg.id
+  value       = data.azurerm_resource_group.rg.id
 }
 
 output "acr_id" {
@@ -56,4 +56,14 @@ output "acr_sku_policy_id" {
 output "container_ratio_policy_id" {
   description = "resource ID of the container CPU/memory ratio policy definition; not consumed by other modules, exposed for visibility via terraform output"
   value       = module.policy.container_ratio_policy_id
+}
+
+output "sentinel_rule_id" {
+  description = "resource ID of the Sentinel analytics rule; not consumed by other modules, exposed for visibility via terraform output"
+  value       = module.monitoring.sentinel_rule_id
+}
+
+output "discord_notifications_enabled" {
+  description = "whether the Discord notification path was built"
+  value       = module.monitoring.discord_notifications_enabled
 }
