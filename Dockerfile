@@ -1,5 +1,5 @@
 # creates an alpine image (minimal image) with python 3.12 installed.
-FROM python:3.12-alpine
+FROM python:3.15-alpine
 
 # don't write .pyc files, and send python output straight to the logs without buffering
 ENV PYTHONDONTWRITEBYTECODE=1 \
