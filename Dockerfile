@@ -5,6 +5,9 @@ FROM python:3.12-alpine
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
+# pull in the latest patched OS packages, the base image can be weeks behind
+RUN apk upgrade --no-cache
+
 # the working directory in the docker container, creates it if needed.
 WORKDIR /app
 
@@ -13,7 +16,7 @@ WORKDIR /app
 COPY requirements.txt .
 
 # installs all dependencies from the requirements file, without keeping pip's download cache in the image.
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir -r requirements.txt
 
 # copies all my files in the app local folder to the docker app folder.
 COPY app/ .
