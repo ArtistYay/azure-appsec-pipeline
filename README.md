@@ -322,4 +322,10 @@ These are deliberate calls for a portfolio project, documented so they read as d
 - **OIDC subject format.** Azure federated credentials match the subject as an exact string. If the repo moves to GitHub's immutable subject format, all three credentials have to be deleted and recreated. See [GitHub's changelog](https://github.blog/changelog/2026-04-23-immutable-subject-claims-for-github-actions-oidc-tokens/).
 - **`.terraform.lock.hcl` is gitignored.** HashiCorp recommends committing it so every run uses the exact same provider build. The provider version is pinned to `4.79.0`, which limits the risk.
 
+## NOTICE
+
+Container Apps logs use a legacy delivery method. The environment sends logs to Log Analytics through the HTTP Data Collector API, which Microsoft stopped supporting on September 14, 2026. It still works but only receives critical security fixes. The replacement is the Azure Monitor logging destination plus a diagnostic setting. That writes to ContainerAppConsoleLogs (no _CL) with a Log column instead of Log_s, so the detection query would need updating too.
+
 #### You can read all my run-ins and mishaps in my knowledge base → [Azure Appsec Pipeline](https://notes.artistuniverse.tech/personal_projects/azure_appsec_pipeline/)
+
+![Sentinel incident](docs/images/sentinel-incident.png)
