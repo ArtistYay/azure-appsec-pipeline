@@ -15,70 +15,77 @@ variable "resource_group_name" {
 
 variable "container_app_environment_name" {
   description = "the name of the container app environment"
-  type = string
+  type        = string
 }
 
 variable "log_analytics_workspace_name" {
   description = "the name of the log analytics workspace"
-  type = string
+  type        = string
 }
 
 variable "log_analytics_workspace_sku" {
   description = "the sku of the log analytics workspace"
-  type = string
+  type        = string
 
   validation {
-    condition = contains(["PerGB2018"], var.log_analytics_workspace_sku)
+    condition     = contains(["PerGB2018"], var.log_analytics_workspace_sku)
     error_message = "sku must be pay-as-you-go"
   }
 }
 
 variable "log_analytics_workspace_retention" {
   description = "the number value of how long logs should be retained in the workspace"
-  type = number
+  type        = number
 }
 
 variable "container_app_name" {
   description = "the name of the container app"
-  type = string
+  type        = string
 }
 
 variable "revision_mode" {
   description = "the mode the container app should run on"
-  type = string
+  type        = string
 
   validation {
-    condition = contains(["Single"], var.revision_mode)
+    condition     = contains(["Single"], var.revision_mode)
     error_message = "revision mode must be single mode only"
   }
 }
 
 variable "container_name" {
   description = "the name of the container"
-  type = string
+  type        = string
 }
 
-variable "container_image" {
-  description = "the name of the image"
-  type = string
+variable "bootstrap_image" {
+  description = "public placeholder image used only when the container app is first created, before any image exists in ACR"
+  type        = string
+  default     = "mcr.microsoft.com/k8se/quickstart:latest"
+}
+
+variable "bootstrap_target_port" {
+  description = "port the bootstrap image listens on; app-deploy.yml switches ingress to the real app port"
+  type        = number
+  default     = 80
 }
 
 variable "container_cpu" {
-    description = "cpu for the container"
-    type = number
+  description = "cpu for the container"
+  type        = number
 
-    validation {
-      condition = var.container_cpu >= 0.25 && var.container_cpu <= 2.0
-      error_message = "cpu must be between 0.25 and 2.0"
-    }
+  validation {
+    condition     = var.container_cpu >= 0.25 && var.container_cpu <= 2.0
+    error_message = "cpu must be between 0.25 and 2.0"
+  }
 }
 
 variable "container_memory" {
   description = "the memory of the container"
-  type = string
+  type        = string
 
   validation {
-    condition     = (
+    condition = (
       endswith(var.container_memory, "Gi") &&
       # trimsuffix() strips the literal suffix "Gi" off the string, so "1Gi" becomes "1". It only removes it if it's actually there at the end, so if someone passes "1" with no unit, it just returns "1" unchanged
       tonumber(trimsuffix(var.container_memory, "Gi")) == var.container_cpu * 2
@@ -90,15 +97,11 @@ variable "container_memory" {
 
 variable "user_assigned_identity_id" {
   description = "the managed identity id"
-  type = list(string) #  Container App does expect a list, since a resource can technically have multiple user-assigned identities attached https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/container_app#%C3%ACdentity_id-2:~:text=An%20identity%20block%20supports%20the%20following
+  type        = list(string) #  Container App does expect a list, since a resource can technically have multiple user-assigned identities attached https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/container_app#%C3%ACdentity_id-2:~:text=An%20identity%20block%20supports%20the%20following
 }
 
-variable "acr_id" {
-  description = "the id of the acr"
-  type = string
-}
 
 variable "acr_login_server" {
   description = "the url for the acr login server"
-  type = string
+  type        = string
 }

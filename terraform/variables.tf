@@ -1,4 +1,4 @@
-# shared / resource group 
+# shared / resource group
 
 variable "resource_group_name" {
   description = "name of the resource group"
@@ -111,11 +111,6 @@ variable "container_name" {
   type        = string
 }
 
-variable "container_image" {
-  description = "the name of the image"
-  type        = string
-}
-
 variable "container_cpu" {
   description = "cpu for the container"
   type        = number
@@ -164,4 +159,29 @@ variable "subnet_address_prefix" {
 variable "nsg_name" {
   description = "name of the network security group"
   type        = string
+}
+
+# monitoring module
+
+variable "logic_app_name" {
+  description = "name of the Logic App that forwards alerts to Discord"
+  type        = string
+}
+
+variable "action_group_name" {
+  description = "name of the Azure Monitor action group that calls the Logic App"
+  type        = string
+}
+
+variable "probe_threshold" {
+  description = "how many 404/405 responses one client IP needs in 5 minutes before Sentinel alerts"
+  type        = number
+  default     = 10
+}
+
+variable "discord_webhook_url" {
+  description = "Discord webhook URL for alert notifications. Never put this in a tfvars file, pass it as TF_VAR_discord_webhook_url. Leave empty to skip notifications."
+  type        = string
+  default     = ""
+  sensitive   = true
 }

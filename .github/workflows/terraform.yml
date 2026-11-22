@@ -1,47 +1,180 @@
-name: Deploy Terraform
+name: Terraform
+
+# Plan runs on every PR and every push to main. Apply only runs on main,
+# and only after a required reviewer approves the "dev" environment.
 on:
-  push:
+  pull_request:
+    branches: [main]
     paths:
-      - terraform/**
+      - "terraform/**"
+      - ".tflint.hcl"
+      - ".github/workflows/terraform.yml"
+  push:
+    branches: [main]
+    paths:
+      - "terraform/**"
+      - ".tflint.hcl"
+      - ".github/workflows/terraform.yml"
+  workflow_dispatch:
+
+# least privilege by default; jobs that talk to Azure add id-token: write themselves
 permissions:
-  id-token: write
   contents: read
+
+# never let two runs touch the same state at the same time (the backend lock is the
+# second layer, this stops the second run from even starting)
+concurrency:
+  group: terraform-dev
+  cancel-in-progress: false
+
+env:
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  TERRAFORM_VERSION: "1.15.3"
+  VAR_FILE: "environments/dev/terraform.tfvars"
+  # OIDC auth for the azurerm provider AND the azurerm backend. No client secret exists anywhere.
+  ARM_USE_OIDC: "true"
+  ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  # the only secret Terraform needs; passed as an env var so it never lands in a tfvars file
+  TF_VAR_discord_webhook_url: ${{ secrets.DISCORD_WEBHOOK_URL }}
+
 jobs:
-  build-and-deploy:
+  # ---------------------------------------------------------------------------
+  # 1. Static checks. No Azure credentials needed, so no id-token permission.
+  # ---------------------------------------------------------------------------
+  scan:
+    name: Lint and scan IaC
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform
     steps:
-      - name: 'Checkout repository'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  #version 7
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: 'Az CLI login'
-        uses: azure/login@8c334a195cbb38e46038007b304988d888bf676a #version 2
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
 
-      - name: 'Install terraform'
-        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e #version 4
+      - name: Terraform fmt
+        run: terraform fmt -check -recursive
 
-      - name: 'Terraform fmt'
+      - name: Terraform validate
+        run: |
+          terraform init -backend=false
+          terraform validate -no-color
+
+      - name: Install tflint
+        uses: terraform-linters/setup-tflint@6ffdbaa3be476b3431f7275c26966ef32ff60337 # v6.3.2
+        with:
+          tflint_version: v0.66.0
+
+      - name: tflint
+        run: |
+          tflint --init --config "$GITHUB_WORKSPACE/.tflint.hcl"
+          tflint --recursive --config "$GITHUB_WORKSPACE/.tflint.hcl" --format compact
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Checkov
+        uses: bridgecrewio/checkov-action@b17b606d6ec72bb8ba5721ad5b7e340b80a9fc39 # v12.3142.0
+        with:
+          directory: terraform
+          framework: terraform
+          var_file: terraform/environments/dev/terraform.tfvars
+          quiet: true
+          soft_fail: false
+
+  # ---------------------------------------------------------------------------
+  # 2. Plan against real Azure state. Runs on PRs too, so reviewers see the
+  #    exact changes before merging.
+  # ---------------------------------------------------------------------------
+  plan:
+    name: Plan
+    needs: scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # lets this job request a GitHub OIDC token to exchange for an Azure token
+    defaults:
+      run:
         working-directory: terraform
-        run: terraform fmt -check
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: 'Terraform Init'
-        working-directory: terraform
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Terraform init
         run: |
           terraform init \
-          -backend-config="use_msi=true" \
-          -backend-config="client_id=${{ secrets.AZURE_CLIENT_ID }}" \
-          -backend-config="tenant_id=${{ secrets.AZURE_TENANT_ID }}" \
-          -backend-config="storage_account_name=satfstateappsec" \
-          -backend-config="container_name=tfstate" \
-          -backend-config="key=dev.terraform.tfstate"
+            -backend-config="use_oidc=true" \
+            -backend-config="use_azuread_auth=true" \
+            -backend-config="storage_account_name=satfstateappsec" \
+            -backend-config="container_name=tfstate" \
+            -backend-config="key=dev.terraform.tfstate"
 
-      - name: 'Terraform Validate'
-        working-directory: terraform
-        run: terraform validate -no-color
+      - name: Terraform plan
+        run: terraform plan -no-color -var-file="$VAR_FILE" -out=tfplan
 
-      - name: 'Terraform Plan'
+      - name: Write plan to job summary
+        run: |
+          {
+            echo "## Terraform plan (dev)"
+            echo '```'
+            terraform show -no-color tfplan
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # 3. Apply. Only on main, and the "dev" environment pauses the job until a
+  #    required reviewer clicks Approve. Each job runs on a fresh machine, so it
+  #    has to install Terraform, log in and init again.
+  # ---------------------------------------------------------------------------
+  apply:
+    name: Apply
+    needs: plan
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    environment: dev
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
         working-directory: terraform
-        run: terraform plan -no-color -input=false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Terraform init
+        run: |
+          terraform init \
+            -backend-config="use_oidc=true" \
+            -backend-config="use_azuread_auth=true" \
+            -backend-config="storage_account_name=satfstateappsec" \
+            -backend-config="container_name=tfstate" \
+            -backend-config="key=dev.terraform.tfstate"
+
+      # Re-plan here instead of downloading the plan file from the previous job.
+      # Plan files can contain sensitive values, and on a public repo workflow
+      # artifacts are downloadable by anyone signed in to GitHub.
+      - name: Terraform plan
+        run: terraform plan -no-color -var-file="$VAR_FILE" -out=tfplan
+
+      - name: Terraform apply
+        run: terraform apply -no-color tfplan

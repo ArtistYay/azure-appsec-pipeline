@@ -22,20 +22,40 @@ resource "azurerm_container_app" "azure_appsec_container_app" {
   template {
     container {
       name   = var.container_name
-      image  = "${var.acr_login_server}/${var.container_image}" # the `/` acts as a separator
+      image  = var.bootstrap_image # only used on first create, app-deploy.yml owns the image after that
       cpu    = var.container_cpu
       memory = var.container_memory
     }
   }
 
+  # without ingress the app has no URL at all, nothing can reach /health
+  ingress {
+    external_enabled = true
+    target_port      = var.bootstrap_target_port
+    transport        = "auto"
+
+    traffic_weight {
+      latest_revision = true
+      percentage      = 100
+    }
+  }
+
   identity {
-    type = "UserAssigned"
+    type         = "UserAssigned"
     identity_ids = var.user_assigned_identity_id
   }
 
   registry {
-    server = var.acr_login_server
+    server   = var.acr_login_server
     identity = var.user_assigned_identity_id[0] # get the first identity provided in the list
   }
 
+  # Ownership split: Terraform owns the infrastructure, app-deploy.yml owns which image runs.
+  # Without this, every terraform apply would roll the app back to the bootstrap image.
+  lifecycle {
+    ignore_changes = [
+      template[0].container[0].image,
+      ingress[0].target_port,
+    ]
+  }
 }

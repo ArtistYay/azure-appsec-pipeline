@@ -1,0 +1,178 @@
+name: App deploy
+
+# Test and scan run on every PR and push. Build/push/deploy only run on main,
+# and deploy waits for a required reviewer on the "dev" environment.
+# On a fresh environment, terraform.yml must run first (ACR and the container app must exist).
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "app/**"
+      - "tests/**"
+      - "Dockerfile"
+      - "requirements*.txt"
+      - ".github/workflows/app-deploy.yml"
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - "tests/**"
+      - "Dockerfile"
+      - "requirements*.txt"
+      - ".github/workflows/app-deploy.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: app-deploy-dev
+  cancel-in-progress: false
+
+env:
+  ACR_NAME: appsecdevacr01
+  RESOURCE_GROUP: rg-appsec-dev
+  CONTAINER_APP_NAME: ca-appsec-dev
+  IMAGE_NAME: appsec-app
+  APP_PORT: "5000"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1. Code checks: unit tests, Python SAST, secret scanning.
+  # ---------------------------------------------------------------------------
+  test-and-scan:
+    name: Test and scan code
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # full history, so Gitleaks can scan past commits, not just the latest one
+
+      - name: Install dependencies
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install --no-cache-dir -r requirements.txt -r requirements-dev.txt
+
+      - name: Unit tests
+        run: .venv/bin/python -m pytest -q
+
+      # -ll = report medium and high severity. Any finding fails the job.
+      - name: Bandit (Python SAST)
+        run: .venv/bin/bandit -r app -ll
+
+      - name: Gitleaks (secret scanning)
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          # no PR comments (would need pull-requests: write)
+          GITLEAKS_ENABLE_COMMENTS: "false"
+          # don't upload the findings report: on a public repo that artifact would
+          # publish the exact secret we just caught
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
+
+  # ---------------------------------------------------------------------------
+  # 2. Build the image and scan it with Grype BEFORE it can reach ACR.
+  #    On main, push the scanned image, tagged with the commit SHA.
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build, scan and push image
+    needs: test-and-scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Image name
+        id: meta
+        # tag with the commit SHA, never "latest": every running container traces back to one exact commit
+        run: echo "image=${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Docker build
+        run: docker build -t "${{ steps.meta.outputs.image }}" .
+
+      # fail on HIGH or CRITICAL vulnerabilities that have a fix available
+      - name: Grype (container image scan)
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          image: ${{ steps.meta.outputs.image }}
+          fail-build: true
+          severity-cutoff: high
+          only-fixed: true
+          output-format: table
+
+      - name: Azure login (OIDC)
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Push to ACR
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: |
+          az acr login --name "$ACR_NAME"
+          docker push "${{ steps.meta.outputs.image }}"
+
+  # ---------------------------------------------------------------------------
+  # 3. Deploy the pushed image to Container Apps, then smoke test /health.
+  # ---------------------------------------------------------------------------
+  deploy:
+    name: Deploy to Container Apps
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment: dev
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Azure login (OIDC)
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy new image
+        run: |
+          az config set extension.use_dynamic_install=yes_without_prompt
+
+          # 1) Point ingress at the real app port. Terraform created the app with a public
+          #    bootstrap image on port 80. This is a no-op on every deploy after the first.
+          #    Ingress is an app-level setting, so this doesn't create a new revision.
+          az containerapp ingress update \
+            --name "$CONTAINER_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --target-port "$APP_PORT"
+
+          # 2) Swap in the image this run just built and scanned. This creates a new revision.
+          az containerapp update \
+            --name "$CONTAINER_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --image "${{ needs.build.outputs.image }}"
+
+      - name: Smoke test /health
+        run: |
+          fqdn=$(az containerapp show \
+            --name "$CONTAINER_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --query properties.configuration.ingress.fqdn -o tsv)
+          echo "Testing https://${fqdn}/health"
+          # the app scales to zero, so the first request can take a while to wake it up
+          for attempt in 1 2 3 4 5 6; do
+            if curl --fail --silent --show-error --max-time 30 "https://${fqdn}/health"; then
+              echo; echo "Smoke test passed"
+              exit 0
+            fi
+            echo "Attempt ${attempt} failed, retrying in 20s"
+            sleep 20
+          done
+          echo "Smoke test failed" >&2
+          exit 1

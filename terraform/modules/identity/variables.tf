@@ -28,7 +28,7 @@ variable "role_definition_name" {
   type        = string
 
   validation {
-  condition = contains(["AcrPull"], var.role_definition_name)
-  error_message = "Role must be AcrPull"
-}
+    condition     = contains(["AcrPull"], var.role_definition_name)
+    error_message = "Role must be AcrPull"
+  }
 }

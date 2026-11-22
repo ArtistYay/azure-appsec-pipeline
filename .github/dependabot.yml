@@ -1,0 +1,24 @@
+# Dependabot opens PRs when something this repo depends on has a new version.
+# The github-actions entry matters most: every action is pinned to a commit SHA,
+# and Dependabot is what bumps those SHAs so the pins don't go stale.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "terraform"
+    directory: "/terraform"
+    schedule:
+      interval: "weekly"
